@@ -72,10 +72,9 @@ instance FromTOMLFile PartialAppConfig where
      text <- DTI.readFile path
      case parseTomlDoc ("parsing " ++ path) text of
        Left e -> pure $ Left $ ConfigParseError $ show e
-       Right table -> do
-         case parseEither parseJSON (toJSON table) of
-           Left err -> pure $ Left $ ConfigParseError err
-           Right it -> pure $ Right it
+       Right table -> case parseEither parseJSON (toJSON table) of
+                        Left err -> pure $ Left $ ConfigParseError err
+                        Right it -> pure $ Right it
 
 newtype ProcessEnvironment = ProcessEnvironment { getProcessEnv :: [(String, String)] } deriving (Eq)
 
@@ -89,7 +88,7 @@ instance FromENV PartialAppConfig where
       host = lookup "TODO_HOST" env
 
       port :: Maybe Port
-      port = join $ readMaybe <$> lookup "TODO_PORT" env
+      port = readMaybe =<< lookup "TODO_PORT" env
 
 class MergeOverridable a where
   mergeOverride :: a -> a -> a
@@ -101,8 +100,8 @@ instance MergeOverridable PartialAppConfig where
       resolveMaybes fn = fn a <|> fn b
 
 mergeInPartial :: CompleteAppConfig -> PartialAppConfig -> CompleteAppConfig
-mergeInPartial c p = AppConfig { host = fromMaybe (host c) (Identity <$> host p)
-                               , port = fromMaybe (port c) (Identity <$> port p)
+mergeInPartial c p = AppConfig { host = maybe (host c) Identity (host p)
+                               , port = maybe (port c) Identity (port p)
                                }
 
 rightOrThrow :: (Exception a) => Either a b -> IO b
@@ -132,7 +131,4 @@ makeAppConfig env path = try generateConfig
       fileCfg <- fileResult >>= rightOrThrow
       envCfg <- envResult >>= rightOrThrow
       let partials = [envCfg, fileCfg]
-      Prelude.putStrLn $ show envCfg
-      Prelude.putStrLn $ show fileCfg
-      Prelude.putStrLn $ show $ mergeInPartial def envCfg
       pure $ buildConfigWithDefault def partials
