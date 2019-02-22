@@ -27,6 +27,8 @@ dependencies:
 - bytestring
 - text
 - unordered-containers
+- system-filepath
+- filepath
 
 default-extensions:
   - FlexibleInstances
