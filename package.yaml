@@ -29,8 +29,12 @@ dependencies:
 - unordered-containers
 - system-filepath
 - filepath
+- optparse-applicative
+- pretty-simple
+
 
 default-extensions:
+  - LambdaCase
   - FlexibleInstances
   - DeriveGeneric
   - StandaloneDeriving
@@ -55,16 +59,6 @@ executables:
     - data-default
 
 tests:
-  haskell-restish-todo-test:
-    main:                Spec.hs
-    source-dirs:         test
-    ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
-    dependencies:
-    - haskell-restish-todo
-
   unit:
     main: Spec.hs
     source-dirs: test/Unit

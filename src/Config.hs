@@ -114,11 +114,11 @@ buildConfigWithDefault orig partials = orig `mergeInPartial` combinedPartials
     combinedPartials :: PartialAppConfig
     combinedPartials = foldl mergeOverride def partials
 
-makeAppConfig :: ProcessEnvironment -> FP.FilePath -> IO (Either ConfigurationError CompleteAppConfig)
-makeAppConfig env path = try generateConfig
+makeAppConfig :: ProcessEnvironment -> Maybe FP.FilePath -> IO (Either ConfigurationError CompleteAppConfig)
+makeAppConfig env configPath = try generateConfig
   where
-    fileResult :: IO (Either ConfigurationError PartialAppConfig)
-    fileResult = case FP.takeExtension path of
+    fileResult :: FP.FilePath -> IO (Either ConfigurationError PartialAppConfig)
+    fileResult path = case FP.takeExtension path of
       ".toml" -> fromTOMLFile path
       ".json" -> fromJSONFile path
       ext -> pure $ Left $ InvalidPath ext
@@ -128,7 +128,11 @@ makeAppConfig env path = try generateConfig
 
     generateConfig :: IO CompleteAppConfig
     generateConfig = do
-      fileCfg <- fileResult >>= rightOrThrow
+      fileCfg <- case configPath of
+        Nothing -> pure []
+        Just path -> do
+          res <- fileResult path >>= rightOrThrow
+          pure [res]
       envCfg <- envResult >>= rightOrThrow
-      let partials = [envCfg, fileCfg]
+      let partials = envCfg : fileCfg
       pure $ buildConfigWithDefault def partials
