@@ -11,10 +11,10 @@ steps:
   displayName: Install Stack
 - script: |
     export PATH=$HOME/.local/bin:$PATH
-    stack --no-terminal --install-ghc test --only-dependencies
+    stack --no-nix --no-terminal --install-ghc test --only-dependencies
   displayName: Build Dependencies
 - script: |
     export PATH=$HOME/.local/bin:$PATH
     # Build the package, its tests, and its docs and run the tests
-    stack test --haddock --no-haddock-deps
+    stack test-nix --haddock --no-haddock-deps
   displayName: Test Package
