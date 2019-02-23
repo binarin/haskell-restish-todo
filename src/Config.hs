@@ -1,5 +1,11 @@
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+
 module Config where
 
+import Data.List.NonEmpty(NonEmpty(..))
+import Data.Semigroup (Last(..), Option(..), Semigroup, sconcat)
 import System.Environment (getEnvironment)
 import Control.Exception (try, throw, Exception)
 import Control.Applicative
@@ -21,18 +27,26 @@ import qualified System.FilePath as FP
 type Host = String
 type Port = Integer
 
-data AppConfig f = AppConfig
-  { host :: f Host
-  , port :: f Port
+data Phase = Partial | Final
+
+infixl 3 :-
+type family phase :- field where
+  'Partial :- field = Option (Last field)
+  'Final :- field = field
+
+
+data AppConfig (p :: Phase) = AppConfig
+  { host :: p :- Host
+  , port :: p :- Port
   }
 
-type CompleteAppConfig = AppConfig Identity
+type CompleteAppConfig = AppConfig 'Final
 deriving instance Generic CompleteAppConfig
 deriving instance Eq CompleteAppConfig
 deriving instance Show CompleteAppConfig
 deriving instance FromJSON CompleteAppConfig
 
-type PartialAppConfig = AppConfig Maybe
+type PartialAppConfig = AppConfig 'Partial
 deriving instance Generic PartialAppConfig
 deriving instance Eq PartialAppConfig
 deriving instance Show PartialAppConfig
@@ -44,13 +58,10 @@ defaultHost = "localhost"
 defaultPort :: Port
 defaultPort = 5000
 
-instance Default (AppConfig Identity) where
-  def = AppConfig (Identity defaultHost) (Identity defaultPort)
+instance Default PartialAppConfig where
+  def = AppConfig (Option $ Just $ Last defaultHost) (Option $ Just $ Last defaultPort)
 
-instance Default (AppConfig Maybe) where
-  def = AppConfig Nothing Nothing
-
-data ConfigurationError = ConfigParseError String | InvalidPath FP.FilePath
+data ConfigurationError = ConfigParseError String | InvalidPath FP.FilePath | IncompleteConfig
   deriving (Show)
 
 instance Exception ConfigurationError
@@ -82,7 +93,7 @@ class FromENV cfg where
   fromENV :: ProcessEnvironment -> IO (Either ConfigurationError cfg)
 
 instance FromENV PartialAppConfig where
-  fromENV (ProcessEnvironment env) = pure $ Right $ AppConfig { host = host, port = port }
+  fromENV (ProcessEnvironment env) = pure $ Right $ AppConfig { host = Option $ Last <$> host, port = Option $ Last <$> port }
     where
       host :: Maybe Host
       host = lookup "TODO_HOST" env
@@ -90,29 +101,22 @@ instance FromENV PartialAppConfig where
       port :: Maybe Port
       port = readMaybe =<< lookup "TODO_PORT" env
 
-class MergeOverridable a where
-  mergeOverride :: a -> a -> a
-
-instance MergeOverridable PartialAppConfig where
-  mergeOverride a b = AppConfig { host = resolveMaybes host, port = resolveMaybes port }
-    where
-      resolveMaybes :: (PartialAppConfig -> Maybe x) -> Maybe x
-      resolveMaybes fn = fn a <|> fn b
-
-mergeInPartial :: CompleteAppConfig -> PartialAppConfig -> CompleteAppConfig
-mergeInPartial c p = AppConfig { host = maybe (host c) Identity (host p)
-                               , port = maybe (port c) Identity (port p)
-                               }
+instance Semigroup PartialAppConfig where
+  AppConfig { host = hA, port = pA } <> AppConfig { host = hB, port = pB } =
+    AppConfig { host = hA <> hB, port = pA <> pB }
 
 rightOrThrow :: (Exception a) => Either a b -> IO b
 rightOrThrow (Left e) = throw e
 rightOrThrow (Right e) = pure e
 
-buildConfigWithDefault :: CompleteAppConfig -> [PartialAppConfig] -> CompleteAppConfig
-buildConfigWithDefault orig partials = orig `mergeInPartial` combinedPartials
+buildCompleteConfig :: NonEmpty PartialAppConfig -> Either ConfigurationError CompleteAppConfig
+buildCompleteConfig partials = case AppConfig <$> h <*> p of
+                                 Nothing -> Left IncompleteConfig
+                                 Just c -> Right c
   where
-    combinedPartials :: PartialAppConfig
-    combinedPartials = foldl mergeOverride def partials
+    merged = sconcat partials
+    h = getLast <$> getOption (host merged)
+    p = getLast <$> getOption (port merged)
 
 makeAppConfig :: ProcessEnvironment -> Maybe FP.FilePath -> IO (Either ConfigurationError CompleteAppConfig)
 makeAppConfig env configPath = try generateConfig
@@ -128,11 +132,11 @@ makeAppConfig env configPath = try generateConfig
 
     generateConfig :: IO CompleteAppConfig
     generateConfig = do
-      fileCfg <- case configPath of
+      fileCfgs <- case configPath of
         Nothing -> pure []
         Just path -> do
           res <- fileResult path >>= rightOrThrow
           pure [res]
       envCfg <- envResult >>= rightOrThrow
-      let partials = envCfg : fileCfg
-      pure $ buildConfigWithDefault def partials
+      let partials = def :| (fileCfgs ++ [envCfg])
+      pure (buildCompleteConfig partials) >>= rightOrThrow
