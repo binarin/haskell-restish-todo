@@ -31,6 +31,8 @@ dependencies:
 - filepath
 - optparse-applicative
 - pretty-simple
+- uuid
+- sqlite-simple
 
 
 default-extensions:
@@ -62,6 +64,17 @@ tests:
   unit:
     main: Spec.hs
     source-dirs: test/Unit
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - haskell-restish-todo
+      - hspec
+
+  component:
+    main: Spec.hs
+    source-dirs: test/Component
     ghc-options:
       - -threaded
       - -rtsopts

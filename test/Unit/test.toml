@@ -1,1 +1,4 @@
 host = "host-from-toml"
+
+[taskStoreConfig]
+tscDBFilePath = "/from/toml"

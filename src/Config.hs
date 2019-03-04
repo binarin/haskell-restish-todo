@@ -5,12 +5,11 @@
 module Config where
 
 import Data.List.NonEmpty(NonEmpty(..))
-import Data.Semigroup (Last(..), Option(..), Semigroup, sconcat)
+import Data.Semigroup (Last(..), Semigroup, sconcat)
 import System.Environment (getEnvironment)
 import Control.Exception (try, throw, Exception)
 import Control.Applicative
 import Control.Monad (join)
-import Data.Functor.Identity
 import Data.Default
 import Data.Aeson (eitherDecode, FromJSON(..), toJSON)
 import qualified Data.Aeson as Aeson
@@ -31,13 +30,13 @@ data Phase = Partial | Final
 
 infixl 3 :-
 type family phase :- field where
-  'Partial :- field = Option (Last field)
+  'Partial :- field = Maybe (Last field)
   'Final :- field = field
-
 
 data AppConfig (p :: Phase) = AppConfig
   { host :: p :- Host
   , port :: p :- Port
+  , taskStoreConfig :: p :- TaskStoreConfig p
   }
 
 type CompleteAppConfig = AppConfig 'Final
@@ -59,7 +58,13 @@ defaultPort :: Port
 defaultPort = 5000
 
 instance Default PartialAppConfig where
-  def = AppConfig (Option $ Just $ Last defaultHost) (Option $ Just $ Last defaultPort)
+  def = AppConfig Nothing Nothing Nothing
+
+partialConfigDefaults :: PartialAppConfig
+partialConfigDefaults = AppConfig
+  (Just $ Last defaultHost)
+  (Just $ Last defaultPort)
+  (Just $ Last $ TaskStoreConfig (Just $ Last defaultTscDBFilePath))
 
 data ConfigurationError = ConfigParseError String | InvalidPath FP.FilePath | IncompleteConfig
   deriving (Show)
@@ -93,7 +98,10 @@ class FromENV cfg where
   fromENV :: ProcessEnvironment -> IO (Either ConfigurationError cfg)
 
 instance FromENV PartialAppConfig where
-  fromENV (ProcessEnvironment env) = pure $ Right $ AppConfig { host = Option $ Last <$> host, port = Option $ Last <$> port }
+  fromENV (ProcessEnvironment env) = pure $ Right $ AppConfig { host = Last <$> host
+                                                              , port = Last <$> port
+                                                              , taskStoreConfig = Just $ Last $ tsConfig
+                                                              }
     where
       host :: Maybe Host
       host = lookup "TODO_HOST" env
@@ -101,22 +109,33 @@ instance FromENV PartialAppConfig where
       port :: Maybe Port
       port = readMaybe =<< lookup "TODO_PORT" env
 
+      tsConfig :: PartialTaskStoreConfig
+      tsConfig = case lookup "TODO_DB" env of
+                   Nothing -> def
+                   Just p -> (def :: PartialTaskStoreConfig) { tscDBFilePath = Just $ Last p }
+
 instance Semigroup PartialAppConfig where
-  AppConfig { host = hA, port = pA } <> AppConfig { host = hB, port = pB } =
-    AppConfig { host = hA <> hB, port = pA <> pB }
+  AppConfig { host = hA, port = pA, taskStoreConfig = tA } <> AppConfig { host = hB, port = pB, taskStoreConfig = tB } =
+    AppConfig { host = hA <> hB, port = pA <> pB, taskStoreConfig = joinTSC tA tB }
+    where
+      joinTSC :: Maybe (Last PartialTaskStoreConfig) -> Maybe (Last PartialTaskStoreConfig) -> Maybe (Last PartialTaskStoreConfig)
+      joinTSC Nothing b = b
+      joinTSC a Nothing = a
+      joinTSC (Just (Last a)) (Just (Last b)) = Just $ Last (a <> b)
 
 rightOrThrow :: (Exception a) => Either a b -> IO b
 rightOrThrow (Left e) = throw e
 rightOrThrow (Right e) = pure e
 
 buildCompleteConfig :: NonEmpty PartialAppConfig -> Either ConfigurationError CompleteAppConfig
-buildCompleteConfig partials = case AppConfig <$> h <*> p of
+buildCompleteConfig partials = case AppConfig <$> h <*> p <*> d of
                                  Nothing -> Left IncompleteConfig
                                  Just c -> Right c
   where
     merged = sconcat partials
-    h = getLast <$> getOption (host merged)
-    p = getLast <$> getOption (port merged)
+    h = getLast <$> host merged
+    p = getLast <$> port merged
+    d = buildTaskStoreConfig (getLast <$> taskStoreConfig merged)
 
 makeAppConfig :: ProcessEnvironment -> Maybe FP.FilePath -> IO (Either ConfigurationError CompleteAppConfig)
 makeAppConfig env configPath = try generateConfig
@@ -138,5 +157,35 @@ makeAppConfig env configPath = try generateConfig
           res <- fileResult path >>= rightOrThrow
           pure [res]
       envCfg <- envResult >>= rightOrThrow
-      let partials = def :| (fileCfgs ++ [envCfg])
+      let partials = partialConfigDefaults :| (fileCfgs ++ [envCfg])
       pure (buildCompleteConfig partials) >>= rightOrThrow
+
+data TaskStoreConfig f = TaskStoreConfig { tscDBFilePath :: f :- FilePath }
+
+type CompleteTaskStoreConfig = TaskStoreConfig 'Final
+deriving instance Generic CompleteTaskStoreConfig
+deriving instance Eq CompleteTaskStoreConfig
+deriving instance Show CompleteTaskStoreConfig
+deriving instance FromJSON CompleteTaskStoreConfig
+
+type PartialTaskStoreConfig = TaskStoreConfig 'Partial
+deriving instance Generic PartialTaskStoreConfig
+deriving instance Eq PartialTaskStoreConfig
+deriving instance Show PartialTaskStoreConfig
+deriving instance FromJSON PartialTaskStoreConfig
+
+instance Default PartialTaskStoreConfig where
+  def = TaskStoreConfig $ Nothing
+
+defaultTscDBFilePath :: FilePath
+defaultTscDBFilePath = "/tmp/todo.db"
+
+instance Semigroup PartialTaskStoreConfig where
+  TaskStoreConfig pA <> TaskStoreConfig pB = TaskStoreConfig (pA <> pB)
+
+buildTaskStoreConfig :: Maybe PartialTaskStoreConfig -> Maybe CompleteTaskStoreConfig
+buildTaskStoreConfig part = Just $ TaskStoreConfig path
+  where
+    path = case join ((fmap getLast . tscDBFilePath) <$> part) of
+      Just p -> p
+      Nothing -> defaultTscDBFilePath

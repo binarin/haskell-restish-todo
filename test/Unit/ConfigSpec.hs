@@ -24,22 +24,31 @@ spec = do
     it "has 5000 as default port" $ do
       cfg <- makeAppConfig (ProcessEnvironment []) Nothing >>= rightOrThrow
       port cfg `shouldBe` 5000
+    it "has /tmp/todo.db as default DB path" $ do
+      cfg <- makeAppConfig (ProcessEnvironment []) Nothing >>= rightOrThrow
+      tscDBFilePath (taskStoreConfig cfg) `shouldBe` "/tmp/todo.db"
 
   describe "env config" $ do
     it "is used for every field" $ do
-      cfg <- makeAppConfig (ProcessEnvironment [("TODO_HOST", "this-test"), ("TODO_PORT", "6743")]) Nothing >>= rightOrThrow
+      cfg <- makeAppConfig (ProcessEnvironment [ ("TODO_HOST", "this-test")
+                                               , ("TODO_PORT", "6743")
+                                               , ("TODO_DB", "/from/env")
+                                               ]) Nothing >>= rightOrThrow
       port cfg `shouldBe` 6743
       host cfg `shouldBe` "this-test"
+      tscDBFilePath (taskStoreConfig cfg) `shouldBe` "/from/env"
 
   describe "toml config" $ do
     it "can be parsed" $ do
       cfg <- makeAppConfig (ProcessEnvironment []) (Just testTOML) >>= rightOrThrow
       host cfg `shouldBe` "host-from-toml"
+      tscDBFilePath (taskStoreConfig cfg) `shouldBe` "/from/toml"
 
   describe "json config" $ do
     it "can be parsed" $ do
       cfg <- makeAppConfig (ProcessEnvironment []) (Just testJSON) >>= rightOrThrow
       port cfg `shouldBe` 13822
+      tscDBFilePath (taskStoreConfig cfg) `shouldBe` "/from/json"
 
   describe "combining configs" $ do
     it "env is more important" $ do

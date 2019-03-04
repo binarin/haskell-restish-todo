@@ -72,3 +72,4 @@ nix:
   packages:
     - zlib
     - glibcLocales
+    - sqlite

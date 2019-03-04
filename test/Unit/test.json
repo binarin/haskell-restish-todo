@@ -1,3 +1,6 @@
 {
-    "port": 13822
+    "port": 13822,
+    "taskStoreConfig": {
+        "tscDBFilePath": "/from/json"
+    }
 }
